@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/HomayoonAlimohammadi/reviewer/pkg/modelvendor"
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/schema"
+	"github.com/tmc/langchaingo/vectorstores"
 	"github.com/tmc/langchaingo/vectorstores/milvus"
 )
 
@@ -18,18 +19,29 @@ type Caller interface {
 	Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error)
 }
 
+type Searcher interface {
+	SimilaritySearch(ctx context.Context, query string, numDocuments int,
+		options ...vectorstores.Option) ([]schema.Document, error)
+}
+
 type Reviewer struct {
-	caller      Caller
-	milvusStore milvus.Store
+	llmClient   Caller
+	milvusStore Searcher
 }
 
 func main() {
 	log.Println("starting...")
 
-	// llmClient, err := openai.New(openai.WithToken(os.Getenv("OPENAI_API_KEY")))
-	llmClient, err := ollama.New(ollama.WithModel("llama3.2:3b"))
+	config, err := loadConfig(".")
 	if err != nil {
-		log.Fatalln("failed to create openai client:", err)
+		log.Fatalln("failed to load config:", err)
+	}
+
+	log.Println("config loaded")
+
+	llmClient, err := modelvendor.NewLLM(config.ModelVendor)
+	if err != nil {
+		log.Fatalln("failed to create llm client:", err)
 	}
 
 	log.Println("llm client created")
@@ -49,7 +61,7 @@ func main() {
 	log.Println("milvus store initialized")
 
 	rv := &Reviewer{
-		caller:      llmClient,
+		llmClient:   llmClient,
 		milvusStore: milvusStore,
 	}
 
@@ -129,7 +141,7 @@ func (r *Reviewer) GenerateFeedback(ctx context.Context, retrievedData []schema.
 		guidelines,
 	)
 
-	feedback, err := r.caller.Call(ctx, prompt)
+	feedback, err := r.llmClient.Call(ctx, prompt)
 	if err != nil {
 		return "", fmt.Errorf("failed to call LLM: %w", err)
 	}
